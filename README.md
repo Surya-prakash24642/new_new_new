@@ -43,11 +43,11 @@ Note: The available data points may vary based on the configuration and permissi
 
 ## Supported tools 🛠️
 
-* [ ] ADF (Azure Data Factory)
+* ✅ ADF (Azure Data Factory)
 * [ ] Python (PySpark)
 * [ ] Azure Synapse
 * [ ] Databricks
-* [ ] Fabric
+* ✅ Fabric
 * [ ] Sage Intacct API Integration
 
 ## Supported Destination 🎯
