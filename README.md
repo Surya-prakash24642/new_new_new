@@ -1,77 +1,134 @@
+# SQL-to-Lakehouse Data Ingestion Framework
 
----
+A robust, scalable framework for ingesting data from Azure SQL databases into a Delta Lake-powered data lakehouse with support for full, incremental, and hash-based loading strategies.
 
-# Sage Intacct Data Source Ingestion Connector - README 📄
+## Features
 
-## Overview 🔍
+- **Multiple Loading Strategies**: 
+  - Full Load (FL): Complete table refresh
+  - Incremental Load (IL): Based on timestamp/date field
+  - Hash-based Load: Row-level change detection
+  
+- **Hard Delete Detection**: Automatically identifies and marks records deleted from the source
+- **Metadata Tracking**: Each record includes loading timestamp and deletion status
+- **Binary Data Handling**: Automatic Base64 encoding for VARBINARY columns
+- **Parallel Processing**: Multi-threaded execution for faster data ingestion
+- **Comprehensive Logging**: Detailed logging of all operations
 
-This document provides detailed information about the Sage Intacct data source ingestion connector, including the required credentials, supported data points for ingestion, and any known limitations or considerations.
+## Prerequisites
 
-## Prerequisites ✅
+- Apache Spark environment (Databricks, Synapse Analytics, or standalone Spark cluster)
+- PySpark 3.0 or higher
+- Access credentials for Azure SQL Database
+- Delta Lake installed in your Spark environment
+- Python libraries: concurrent.futures, datetime, base64
 
-Before using this connector, ensure the following requirements are met:
+## Setup Instructions
 
-### Required Credentials 🔐:
+### 1. Configure Connection Parameters
 
-* **API Credentials** : A valid Sage Intacct API key and sender ID.
-* **User Credentials**: Sage Intacct username and password with appropriate permissions.
-* **Company ID**: The unique identifier for your Sage Intacct account.
-* **OAuth Token**: If using OAuth authentication, an access token with the appropriate scope.
-* **Other Required Credentials**: Any other specific credentials, such as access keys or client secrets.
+Create environment variables or securely store the following:
 
-### Data Source URL 🌐:
+```python
+jdbc_hostname = "your-azure-sql-server.database.windows.net"
+jdbc_port = "1433"
+jdbc_database = "your_database_name"
+jdbc_username = "your_username"
+jdbc_password = "your_password"
+```
 
-Provide the Sage Intacct API base URL:
-API Endpoint: [https://api.intacct.com/ia/xml/xmlgw.phtml](https://api.intacct.com/ia/xml/xmlgw.phtml)
+### 2. Prepare Configuration File
 
-## Data Points for Ingestion 📊
+Create a CSV file named `connector_sql.csv` with the following columns:
 
-The following data points are supported by the connector:
+| Column | Description |
+|--------|-------------|
+| source_name | Friendly name for the data source |
+| load_type | Loading strategy: FL (Full Load), IL (Incremental Load), or HASH |
+| source_schema | Schema name in Azure SQL Server |
+| object_name | Table name in Azure SQL Server |
+| incremental_field | Field used for incremental loads (timestamp/date column) |
+| primary_key | Primary key field(s), pipe-delimited for composite keys |
+| sink_schema | Target schema in the data lakehouse |
 
-1. **Customers**: Customer account details and contact information. 👥
-2. **Vendors**: Supplier and vendor information. 🏢
-3. **General Ledger**: Journal entries, transactions, and account balances. 📘
-4. **Accounts Payable**: Invoice and payment tracking for vendors. 💸
-5. **Accounts Receivable**: Customer invoices, payments, and aging reports. 📥
-6. **Purchase Orders**: Procurement records and approvals. 🛒
-7. **Sales Orders**: Sales transactions and order processing. 🧾
-8. **Employee Expenses**: Expense reports and reimbursements. 🧍‍♂️💼
-9. **Projects**: Project-related financials and tracking. 📁
-10. **Inventory**: Stock levels and inventory movement tracking. 📦
+Example row:
+```
+"Sales Database","IL","dbo","Customers","LastModifiedDate","CustomerId","raw.connector_sql"
+```
 
-Note: The available data points may vary based on the configuration and permissions granted to the connector.
+### 3. Create Lakehouse Tables
 
-## Supported tools 🛠️
+Ensure your Delta Lake has the following tables:
+- Tables for your ingested data (will be created automatically)
+- Log table: `raw.connector_sql` (for ingestion logs)
+- Hard delete log table: `catalog.raw.connector_sql.vp_monitor_hard_delete_log`
 
-* ✅ ADF (Azure Data Factory)
-* [ ] Python (PySpark)
-* [ ] Azure Synapse
-* [ ] Databricks
-* ✅ Fabric
-* [ ] Sage Intacct API Integration
+## Usage Guide
 
-## Supported Destination 🎯
+### Basic Usage
 
-### Files
+1. Place the script and configuration file in your Spark environment
+2. Set up connection parameters
+3. Run the script:
 
-* ✅ Parquet
+```python
+spark-submit sql_lakehouse_ingestion.py
+```
 
-### Lakehouse
+### Loading Strategies
 
-* ✅ Fabric - Lakehouse
+#### Full Load (FL)
+- Overwrites the entire target table
+- Use for small tables or initial loads
+- Configuration: set `load_type` to `FL`
 
-### **Data Warehouse / Database**
+#### Incremental Load (IL)
+- Appends only new records based on a timestamp field
+- Requires `incremental_field` to be set
+- Configuration: set `load_type` to `IL`
 
-* ✅ Fabric - Warehouse
+#### Hash-based Load (HASH)
+- Compares record checksums to identify changes
+- Most efficient for large tables with infrequent changes
+- Configuration: set `load_type` to `HASH`
 
-## Limitations ⚠️
+### Hard Delete Detection
 
-1. **API Rate Limiting**: Sage Intacct imposes API rate limits, which may restrict the frequency of data requests. Be mindful of these limits to avoid failures.
-2. **Pagination Handling**: Large datasets require pagination when making API calls.
-3. **Data Sync Delays**: Sage Intacct data may not always be updated in real time.
-4. **Data Type Constraints**: Some fields, especially custom properties, may have inconsistent data types.
-5. **Time Zone Handling**: Timestamps in Sage Intacct are stored in UTC and may require conversion.
-6. **Schema Changes**: Any modifications to Sage Intacct object schemas may require updates to the ingestion pipeline.
+The framework automatically detects records deleted from the source by:
+1. Comparing primary keys between source and target
+2. Marking deleted records with `__is_deleted = True`
+3. Setting `__deleted_at` timestamp
 
----
+This preserves historical data while flagging records no longer in the source.
 
+## Understanding Output Tables
+
+Each ingested table includes metadata columns:
+
+| Column | Description |
+|--------|-------------|
+| __is_deleted | Boolean indicating if record has been deleted from source |
+| __deleted_at | Timestamp when record was detected as deleted |
+| __data_loaded_at | Timestamp when record was loaded |
+
+Target tables are named using the pattern: `{source_schema}__{source_table}`
+
+## Monitoring and Logging
+
+- Ingestion logs are written to `raw.connector_sql`
+- Hard delete detection logs are written to `catalog.raw.connector_sql.vp_monitor_hard_delete_log`
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Connection Failures**:
+   - Verify JDBC connection parameters
+   - Check firewall rules for your Azure SQL Database
+
+2. **Schema Mismatch Errors**:
+   - For the first run, use FL load type to establish schema
+   - For HASH loading, the framework handles schema evolution
+
+3. **Parallel Processing Issues**:
+   - Adjust `max_workers` in the ThreadPoolExecutor to balance performance and resource usage
